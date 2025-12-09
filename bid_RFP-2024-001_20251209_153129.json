@@ -1,0 +1,21 @@
+{
+  "rfp_id": "RFP-2024-001",
+  "client": "Coastal Construction Ltd",
+  "product": {
+    "sku": "PT-001",
+    "name": "Premium Exterior Gloss Paint",
+    "specs": "Water-resistant, high-gloss, UV protection, exterior grade",
+    "price": 45.99,
+    "stock": 5000
+  },
+  "quantity": 500,
+  "pricing": {
+    "base_price": 22995.0,
+    "discount": 5.0,
+    "discount_amount": 1149.75,
+    "total": 21845.25,
+    "unit_price": 45.99
+  },
+  "confidence": 95,
+  "generated_at": "2025-12-09T15:31:29.037305"
+}
