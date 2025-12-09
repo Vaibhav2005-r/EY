@@ -7,19 +7,35 @@ from typing import List, Dict, Optional
 import numpy as np
 from fpdf import FPDF
 
+from sqlalchemy import create_engine, Column, String, Float, Integer, JSON, ForeignKey
+from sqlalchemy.orm import sessionmaker, declarative_base, relationship
+
+# DB Setup
+SQLALCHEMY_DATABASE_URL = "sqlite:///./neural_ninjas.db"
+engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
 # ============================================================================
 # PHASE 1: DATA MODELS
 # ============================================================================
 
-class Product:
+class Product(Base):
     """Product catalog item"""
+    __tablename__ = "products"
+    
+    sku = Column(String, primary_key=True, index=True)
+    name = Column(String)
+    specs = Column(String)
+    price = Column(Float)
+    stock = Column(Integer)
+    
     def __init__(self, sku: str, name: str, specs: str, price: float, stock: int):
         self.sku = sku
         self.name = name
         self.specs = specs
         self.price = price
         self.stock = stock
-        self.embedding = None  # Will store vector embedding
     
     def to_dict(self):
         return {
@@ -30,14 +46,22 @@ class Product:
             "stock": self.stock
         }
 
-class RFP:
+class RFP(Base):
     """Request for Proposal"""
-    def __init__(self, rfp_id: str, client: str, content: str, date: str):
+    __tablename__ = "rfps"
+    
+    rfp_id = Column(String, primary_key=True, index=True)
+    client = Column(String)
+    content = Column(String)
+    date = Column(String)
+    status = Column(String, default="pending")
+    
+    def __init__(self, rfp_id: str, client: str, content: str, date: str, status: str = "pending"):
         self.rfp_id = rfp_id
         self.client = client
         self.content = content
         self.date = date
-        self.status = "pending"
+        self.status = status
     
     def to_dict(self):
         return {
@@ -48,8 +72,22 @@ class RFP:
             "status": self.status
         }
 
-class Bid:
+class Bid(Base):
     """Generated bid proposal"""
+    __tablename__ = "bids"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    rfp_id = Column(String, ForeignKey("rfps.rfp_id"))
+    product_sku = Column(String, ForeignKey("products.sku"))
+    quantity = Column(Integer)
+    pricing = Column(JSON)
+    confidence = Column(Float)
+    generated_at = Column(String)
+    
+    # Relationships
+    rfp = relationship("RFP")
+    product = relationship("Product")
+    
     def __init__(self, rfp: RFP, product: Product, quantity: int, 
                  pricing: Dict, confidence: float):
         self.rfp = rfp
@@ -58,6 +96,8 @@ class Bid:
         self.pricing = pricing
         self.confidence = confidence
         self.generated_at = datetime.now().isoformat()
+        self.rfp_id = rfp.rfp_id
+        self.product_sku = product.sku
     
     def to_dict(self):
         return {
@@ -70,75 +110,96 @@ class Bid:
             "generated_at": self.generated_at
         }
 
+# Create tables
+Base.metadata.create_all(bind=engine)
+
 # ============================================================================
 # PHASE 2: MOCK DATA GENERATION
 # ============================================================================
 
 def generate_product_catalog() -> List[Product]:
-    """Generate mock product catalog"""
-    products = [
-        Product("PT-001", "Premium Exterior Gloss Paint", 
-                "Water-resistant, high-gloss, UV protection, exterior grade", 
-                45.99, 5000),
-        Product("PT-002", "Industrial Anti-Corrosion Coating", 
-                "High-viscosity, rust-proof, industrial grade, chemical resistant", 
-                89.50, 3000),
-        Product("PT-003", "Eco-Friendly Interior Paint", 
-                "Low-VOC, matte finish, interior use, quick-dry", 
-                38.75, 8000),
-        Product("SV-001", "Heavy-Duty Industrial Solvent", 
-                "Fast-evaporating, industrial grade, multi-purpose cleaner", 
-                52.30, 2500),
-        Product("CT-001", "Marine Grade Protective Coating", 
-                "Saltwater-resistant, high-durability, weatherproof, marine grade", 
-                125.00, 1500),
-        Product("PT-004", "High-Gloss Automotive Paint", 
-                "High-gloss, fast-dry, automotive grade, color-stable", 
-                67.80, 4000),
-        Product("PT-005", "Warehouse Floor Epoxy Coating", 
-                "Industrial strength, chemical resistant, non-slip, heavy-traffic", 
-                95.25, 2200),
-        Product("SV-002", "Paint Thinner Professional Grade", 
-                "Quick-dry formula, low odor, professional grade", 
-                28.50, 6000),
-        Product("PT-006", "Fire-Resistant Industrial Coating", 
-                "Flame-retardant, high-temperature resistant, industrial grade", 
-                156.00, 1200),
-        Product("CT-002", "Waterproofing Membrane Coating", 
-                "100% waterproof, flexible, crack-bridging, long-lasting", 
-                78.90, 3500),
-    ]
-    return products
+    """Generate mock product catalog or load from DB"""
+    db = SessionLocal()
+    try:
+        if db.query(Product).count() == 0:
+            products = [
+                Product("PT-001", "Premium Exterior Gloss Paint", 
+                        "Water-resistant, high-gloss, UV protection, exterior grade", 
+                        45.99, 5000),
+                Product("PT-002", "Industrial Anti-Corrosion Coating", 
+                        "High-viscosity, rust-proof, industrial grade, chemical resistant", 
+                        89.50, 3000),
+                Product("PT-003", "Eco-Friendly Interior Paint", 
+                        "Low-VOC, matte finish, interior use, quick-dry", 
+                        38.75, 8000),
+                Product("SV-001", "Heavy-Duty Industrial Solvent", 
+                        "Fast-evaporating, industrial grade, multi-purpose cleaner", 
+                        52.30, 2500),
+                Product("CT-001", "Marine Grade Protective Coating", 
+                        "Saltwater-resistant, high-durability, weatherproof, marine grade", 
+                        125.00, 1500),
+                Product("PT-004", "High-Gloss Automotive Paint", 
+                        "High-gloss, fast-dry, automotive grade, color-stable", 
+                        67.80, 4000),
+                Product("PT-005", "Warehouse Floor Epoxy Coating", 
+                        "Industrial strength, chemical resistant, non-slip, heavy-traffic", 
+                        95.25, 2200),
+                Product("SV-002", "Paint Thinner Professional Grade", 
+                        "Quick-dry formula, low odor, professional grade", 
+                        28.50, 6000),
+                Product("PT-006", "Fire-Resistant Industrial Coating", 
+                        "Flame-retardant, high-temperature resistant, industrial grade", 
+                        156.00, 1200),
+                Product("CT-002", "Waterproofing Membrane Coating", 
+                        "100% waterproof, flexible, crack-bridging, long-lasting", 
+                        78.90, 3500),
+            ]
+            db.add_all(products)
+            db.commit()
+            print("✓ Populated database with initial products")
+        
+        return db.query(Product).all()
+    finally:
+        db.close()
 
 def generate_sample_rfps() -> List[RFP]:
-    """Generate sample RFPs"""
-    rfps = [
-        RFP("RFP-2024-001", "Coastal Construction Ltd",
-            "We require 500 liters of high-gloss exterior paint suitable for coastal conditions. "
-            "Must be weather-resistant and UV protected. Delivery needed by Q3 2024.",
-            "2024-12-01"),
-        
-        RFP("RFP-2024-002", "Marine Industries Corp",
-            "Looking for 800 liters of marine-grade protective coating for ship hulls. "
-            "Must be saltwater-resistant and highly durable. Budget: $100,000.",
-            "2024-12-03"),
-        
-        RFP("RFP-2024-003", "AutoTech Manufacturing",
-            "Need 1200 liters of automotive-grade high-gloss paint for production line. "
-            "Fast-dry formula essential. Delivery within 30 days.",
-            "2024-12-05"),
-        
-        RFP("RFP-2024-004", "Industrial Warehouse Solutions",
-            "Require 2000 liters of epoxy floor coating for warehouse facility. "
-            "Must be chemical resistant and suitable for heavy forklift traffic.",
-            "2024-12-07"),
-        
-        RFP("RFP-2024-005", "FireSafe Construction",
-            "Need 600 liters of fire-resistant coating for industrial building project. "
-            "Must meet fire safety regulations and high-temperature specifications.",
-            "2024-12-09"),
-    ]
-    return rfps
+    """Generate sample RFPs or load from DB"""
+    db = SessionLocal()
+    try:
+        if db.query(RFP).count() == 0:
+            rfps = [
+                RFP("RFP-2024-001", "Coastal Construction Ltd",
+                    "We require 500 liters of high-gloss exterior paint suitable for coastal conditions. "
+                    "Must be weather-resistant and UV protected. Delivery needed by Q3 2024.",
+                    "2024-12-01"),
+                
+                RFP("RFP-2024-002", "Marine Industries Corp",
+                    "Looking for 800 liters of marine-grade protective coating for ship hulls. "
+                    "Must be saltwater-resistant and highly durable. Budget: $100,000.",
+                    "2024-12-03"),
+                
+                RFP("RFP-2024-003", "AutoTech Manufacturing",
+                    "Need 1200 liters of automotive-grade high-gloss paint for production line. "
+                    "Fast-dry formula essential. Delivery within 30 days.",
+                    "2024-12-05"),
+                
+                RFP("RFP-2024-004", "Industrial Warehouse Solutions",
+                    "Require 2000 liters of epoxy floor coating for warehouse facility. "
+                    "Must be chemical resistant and suitable for heavy forklift traffic.",
+                    "2024-12-07"),
+                
+                RFP("RFP-2024-005", "FireSafe Construction",
+                    "Need 600 liters of fire-resistant coating for industrial building project. "
+                    "Must meet fire safety regulations and high-temperature specifications.",
+                    "2024-12-09"),
+            ]
+            db.add_all(rfps)
+            db.commit()
+            print("✓ Populated database with initial RFPs")
+            
+        return db.query(RFP).all()
+    finally:
+        db.close()
 
 # ============================================================================
 # PHASE 3: AGENT 1 - TECHNICAL AGENT (RAG-based Semantic Search)
@@ -652,17 +713,28 @@ class RFPRequest(BaseModel):
 
 @app.get("/products")
 def get_products():
-    return [p.to_dict() for p in products]
+    db = SessionLocal()
+    try:
+        products = db.query(Product).all()
+        return [p.to_dict() for p in products]
+    finally:
+        db.close()
 
 @app.get("/rfps")
 def get_rfps():
-    return [r.to_dict() for r in rfps]
+    db = SessionLocal()
+    try:
+        rfps = db.query(RFP).all()
+        return [r.to_dict() for r in rfps]
+    finally:
+        db.close()
 
 @app.post("/upload-rfp")
 async def upload_rfp(file: UploadFile = File(...)):
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
+    db = SessionLocal()
     try:
         # Read file content
         content = await file.read()
@@ -675,7 +747,10 @@ async def upload_rfp(file: UploadFile = File(...)):
             text += page.extract_text() + "\n"
             
         # Create new RFP
-        new_id = f"RFP-{datetime.now().year}-{len(rfps) + 1:03d}"
+        # Get count for ID generation
+        count = db.query(RFP).count()
+        new_id = f"RFP-{datetime.now().year}-{count + 1:03d}"
+        
         new_rfp = RFP(
             rfp_id=new_id,
             client=f"Uploaded: {file.filename}",
@@ -683,59 +758,151 @@ async def upload_rfp(file: UploadFile = File(...)):
             date=datetime.now().strftime("%Y-%m-%d")
         )
         
-        rfps.append(new_rfp)
+        db.add(new_rfp)
+        db.commit()
+        db.refresh(new_rfp)
         
         return new_rfp.to_dict()
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
 @app.post("/process-rfp")
 def process_rfp_endpoint(request: RFPRequest):
-    # Find the RFP
-    rfp = next((r for r in rfps if r.rfp_id == request.rfp_id), None)
-    if not rfp:
-        raise HTTPException(status_code=404, detail="RFP not found")
-    
-    # Reset logs for this run (in a real app, we'd create a new orchestrator per request)
-    orchestrator.logs = []
-    orchestrator.sales_agent.logs = []
-    orchestrator.technical_agent.logs = []
-    orchestrator.pricing_agent.logs = []
-    
-    # Process
-    bid = orchestrator.process_rfp(rfp)
-    
-    # Collect logs
-    logs = []
-    for log in orchestrator.get_all_logs():
-        # Parse log string to structured format for frontend
-        # Format: "[HH:MM:SS] [Agent Name]: Message"
-        try:
-            parts = log.split("] [")
-            timestamp = parts[0].strip("[")
-            agent_msg = parts[1].split("]: ")
-            agent = agent_msg[0]
-            message = agent_msg[1]
-            logs.append({
-                "timestamp": timestamp,
-                "agent": agent,
-                "message": message
-            })
-        except:
-            logs.append({
-                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "agent": "System",
-                "message": log
-            })
+    db = SessionLocal()
+    try:
+        # Find the RFP
+        rfp = db.query(RFP).filter(RFP.rfp_id == request.rfp_id).first()
+        if not rfp:
+            raise HTTPException(status_code=404, detail="RFP not found")
+        
+        # Reset logs for this run
+        orchestrator.logs = []
+        orchestrator.sales_agent.logs = []
+        orchestrator.technical_agent.logs = []
+        orchestrator.pricing_agent.logs = []
+        
+        # Process
+        # Note: orchestrator uses detached product objects. 
+        # The returned bid will have a detached product and attached rfp (from this session)
+        bid = orchestrator.process_rfp(rfp)
+        
+        if bid:
+            # We need to merge the product into this session to avoid "Object is already attached to session" errors
+            # or "Instance is not bound to a Session" errors if we try to commit.
+            # Actually, since we are just adding the Bid, and Bid has relationships...
+            # The safest way is to just add the bid. SQLAlchemy merge might be needed for the product.
+            # But let's try adding first. If product is detached, it might work if we don't modify it.
             
-    response = {
-        "logs": logs,
-        "bid": bid.to_dict() if bid else None,
-        "success": bid is not None
-    }
-    
-    return response
+            # To be safe, let's merge the product if it's not in session
+            if bid.product not in db:
+                bid.product = db.merge(bid.product)
+            
+            db.add(bid)
+            
+            # Update RFP status
+            rfp.status = "processed"
+            
+            db.commit()
+            db.refresh(bid)
+            
+        # Collect logs
+        logs = []
+        for log in orchestrator.get_all_logs():
+            try:
+                parts = log.split("] [")
+                timestamp = parts[0].strip("[")
+                agent_msg = parts[1].split("]: ")
+                agent = agent_msg[0]
+                message = agent_msg[1]
+                logs.append({
+                    "timestamp": timestamp,
+                    "agent": agent,
+                    "message": message
+                })
+            except:
+                logs.append({
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "agent": "System",
+                    "message": log
+                })
+                
+        response = {
+            "logs": logs,
+            "bid": bid.to_dict() if bid else None,
+            "success": bid is not None
+        }
+        
+        return response
+    except Exception as e:
+        print(f"Error processing RFP: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+@app.get("/analytics")
+def get_analytics():
+    db = SessionLocal()
+    try:
+        # 1. Total RFPs
+        total_rfps = db.query(RFP).count()
+        
+        # 2. Total Bids Value
+        # Since pricing is JSON, we might need to fetch all bids and sum in python 
+        # (SQLite JSON support varies, safe to do in python for small scale)
+        bids = db.query(Bid).all()
+        total_value = sum(bid.pricing.get('total', 0) for bid in bids)
+        
+        # 3. Approval Rate
+        approved_count = db.query(RFP).filter(RFP.status == 'approved').count()
+        approval_rate = (approved_count / total_rfps * 100) if total_rfps > 0 else 0
+        
+        # 4. Avg Confidence
+        avg_confidence = 0
+        if bids:
+            avg_confidence = sum(bid.confidence for bid in bids) / len(bids)
+            
+        # 5. RFPs by Status
+        statuses = ["pending", "processed", "approved", "rejected"]
+        status_counts = []
+        for status in statuses:
+            count = db.query(RFP).filter(RFP.status == status).count()
+            status_counts.append({"name": status.capitalize(), "value": count})
+            
+        return {
+            "total_rfps": total_rfps,
+            "total_value": round(total_value, 2),
+            "approval_rate": round(approval_rate, 1),
+            "avg_confidence": round(avg_confidence, 1),
+            "status_distribution": status_counts
+        }
+    except Exception as e:
+        print(f"Error in analytics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+class RFPStatusUpdate(BaseModel):
+    status: str
+
+@app.put("/rfps/{rfp_id}/status")
+def update_rfp_status(rfp_id: str, status_update: RFPStatusUpdate):
+    db = SessionLocal()
+    try:
+        rfp = db.query(RFP).filter(RFP.rfp_id == rfp_id).first()
+        if not rfp:
+            raise HTTPException(status_code=404, detail="RFP not found")
+        
+        rfp.status = status_update.status
+        db.commit()
+        db.refresh(rfp)
+        return rfp.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     import uvicorn
