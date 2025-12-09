@@ -3,6 +3,8 @@ import { FileText, Search, DollarSign, CheckCircle, XCircle, AlertCircle, Loader
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+import AnalyticsStats from './AnalyticsStats';
+
 const RFPProcessorSystem = () => {
     const [activeRFP, setActiveRFP] = useState(null);
     const [processing, setProcessing] = useState(false);
@@ -12,8 +14,10 @@ const RFPProcessorSystem = () => {
     const [showApproval, setShowApproval] = useState(false);
     const logsEndRef = useRef(null);
 
+    // Data states
     const [rfpList, setRfpList] = useState([]);
     const [productCatalog, setProductCatalog] = useState([]);
+    const [analyticsData, setAnalyticsData] = useState(null);
 
     const [uploading, setUploading] = useState(false);
     const fileInputRef = useRef(null);
@@ -24,25 +28,28 @@ const RFPProcessorSystem = () => {
     }, [agentLogs]);
 
     // Fetch initial data
+    const fetchAllData = async () => {
+        try {
+            const [rfpsRes, productsRes, analyticsRes] = await Promise.all([
+                fetch('http://localhost:8000/rfps'),
+                fetch('http://localhost:8000/products'),
+                fetch('http://localhost:8000/analytics')
+            ]);
+
+            const rfps = await rfpsRes.json();
+            const products = await productsRes.json();
+            const analytics = await analyticsRes.json();
+
+            setRfpList(rfps);
+            setProductCatalog(products);
+            setAnalyticsData(analytics);
+        } catch (error) {
+            console.error("Failed to fetch data:", error);
+        }
+    };
+
     useEffect(() => {
-        const fetchData = async () => {
-            try {
-                const [rfpsRes, productsRes] = await Promise.all([
-                    fetch('http://localhost:8000/rfps'),
-                    fetch('http://localhost:8000/products')
-                ]);
-
-                const rfps = await rfpsRes.json();
-                const products = await productsRes.json();
-
-                setRfpList(rfps);
-                setProductCatalog(products);
-            } catch (error) {
-                console.error("Failed to fetch data:", error);
-            }
-        };
-
-        fetchData();
+        fetchAllData();
     }, []);
 
     const handleFileUpload = async (event) => {
@@ -68,6 +75,7 @@ const RFPProcessorSystem = () => {
 
             const newRfp = await response.json();
             setRfpList(prev => [...prev, newRfp]);
+            fetchAllData(); // Refresh analytics
             alert('RFP uploaded successfully!');
         } catch (error) {
             console.error('Error uploading RFP:', error);
@@ -105,6 +113,7 @@ const RFPProcessorSystem = () => {
                 setFinalBid(data.bid);
                 setMatchedProducts([data.bid.product]); // Show the selected product
                 setShowApproval(true);
+                fetchAllData(); // Refresh analytics
             }
 
         } catch (error) {
@@ -119,24 +128,46 @@ const RFPProcessorSystem = () => {
         }
     };
 
-    const approveBid = () => {
+    const updateStatus = async (status) => {
         const activeId = activeRFP.rfp_id || activeRFP.id;
-        const updatedRFPs = rfpList.map(rfp => {
-            const currentId = rfp.rfp_id || rfp.id;
-            return currentId === activeId ? { ...rfp, status: 'approved' } : rfp;
-        });
-        setRfpList(updatedRFPs);
-        alert(`Bid ${activeId} approved! Generating final PDF document...`);
+        try {
+            const response = await fetch(`http://localhost:8000/rfps/${activeId}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status })
+            });
+
+            if (!response.ok) throw new Error('Failed to update status');
+
+            // Optimistic update
+            const updatedRFPs = rfpList.map(rfp => {
+                const currentId = rfp.rfp_id || rfp.id;
+                return currentId === activeId ? { ...rfp, status } : rfp;
+            });
+            setRfpList(updatedRFPs);
+
+            // Refresh all data to ensure consistency
+            fetchAllData();
+            return true;
+        } catch (error) {
+            console.error("Error updating status:", error);
+            alert("Failed to update status on server");
+            return false;
+        }
     };
 
-    const rejectBid = () => {
-        const activeId = activeRFP.rfp_id || activeRFP.id;
-        const updatedRFPs = rfpList.map(rfp => {
-            const currentId = rfp.rfp_id || rfp.id;
-            return currentId === activeId ? { ...rfp, status: 'rejected' } : rfp;
-        });
-        setRfpList(updatedRFPs);
-        alert(`Bid ${activeId} rejected. Sending for manual review...`);
+    const approveBid = async () => {
+        const success = await updateStatus('approved');
+        if (success) {
+            alert(`Bid approved! Generating final PDF document...`);
+        }
+    };
+
+    const rejectBid = async () => {
+        const success = await updateStatus('rejected');
+        if (success) {
+            alert(`Bid rejected. Sending for manual review...`);
+        }
     };
 
     const generatePDF = () => {
@@ -282,6 +313,9 @@ const RFPProcessorSystem = () => {
                         </button>
                     </div>
                 </div>
+
+                {/* Analytics Dashboard */}
+                <AnalyticsStats stats={analyticsData} />
 
                 {/* Incoming RFPs */}
                 <div className="bg-[#1e293b] border border-slate-700/50 rounded-xl p-6 shadow-lg">
