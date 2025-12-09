@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from typing import List, Dict, Optional
 import numpy as np
+from fpdf import FPDF
 
 # ============================================================================
 # PHASE 1: DATA MODELS
@@ -527,6 +528,99 @@ Stock Available:     {bid.product.stock} liters
 """
     return summary
 
+
+# ============================================================================
+# PHASE 7.1: PDF GENERATION FOR BID OUTPUT
+# ============================================================================
+
+class BidPDF(FPDF):
+    """Simple PDF layout for bid proposal"""
+    def header(self):
+        # Title
+        self.set_font("Helvetica", "B", 14)
+        self.cell(0, 10, "Bid Proposal", ln=1, align="C")
+        self.ln(2)
+        # Line
+        self.set_draw_color(0, 0, 0)
+        self.set_line_width(0.3)
+        self.line(10, self.get_y(), 200, self.get_y())
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font("Helvetica", "I", 8)
+        self.cell(0, 10, f"Page {self.page_no()}", align="C")
+
+
+def export_bid_pdf(bid: Bid, filename: str = None):
+    """Generate a simple, clean PDF for the bid proposal"""
+    if filename is None:
+        filename = f"bid_{bid.rfp.rfp_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+
+    pdf = BidPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # ---------- SECTION 1: RFP + Client ----------
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "RFP Details", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 6, f"RFP ID: {bid.rfp.rfp_id}", ln=1)
+    pdf.cell(0, 6, f"Client: {bid.rfp.client}", ln=1)
+    pdf.cell(0, 6, f"Generated At: {bid.generated_at}", ln=1)
+    pdf.ln(4)
+
+    # ---------- SECTION 2: Product Details ----------
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Product Details", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.multi_cell(0, 6, f"SKU: {bid.product.sku}")
+    pdf.multi_cell(0, 6, f"Product: {bid.product.name}")
+    pdf.multi_cell(0, 6, f"Specifications: {bid.product.specs}")
+    pdf.cell(0, 6, f"Quantity: {bid.quantity} liters", ln=1)
+    pdf.ln(4)
+
+    # ---------- SECTION 3: Pricing ----------
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Pricing Breakdown", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+
+    pdf.cell(0, 6, f"Unit Price: ${bid.pricing['unit_price']:.2f} per liter", ln=1)
+    pdf.cell(0, 6, f"Base Price: ${bid.pricing['base_price']:,.2f}", ln=1)
+    pdf.cell(
+        0,
+        6,
+        f"Discount: {bid.pricing['discount']:.1f}% "
+        f"(${bid.pricing['discount_amount']:,.2f})",
+        ln=1,
+    )
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, f"Total Bid: ${bid.pricing['total']:,.2f}", ln=1)
+    pdf.ln(4)
+
+    # ---------- SECTION 4: Confidence / Notes ----------
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Technical Match & Notes", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    pdf.cell(0, 6, f"Match Confidence: {bid.confidence}%", ln=1)
+    pdf.cell(0, 6, f"Stock Available: {bid.product.stock} liters", ln=1)
+    pdf.ln(4)
+
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.multi_cell(
+        0,
+        5,
+        "Note: This is an auto-generated bid based on current catalog, "
+        "stock levels, and configured discount rules. "
+        "Final approval is required from the Sales Manager.",
+    )
+
+    # Save file
+    pdf.output(filename)
+    print(f"✓ Bid PDF exported to {filename}")
+
+
 # ============================================================================
 # PHASE 8: MAIN EXECUTION & DEMO
 # ============================================================================
@@ -569,6 +663,7 @@ def main():
             generated_bids.append(bid)
             print(generate_bid_summary(bid))
             export_bid_json(bid)
+            export_bid_pdf(bid) 
         else:
             print(f"\n✗ Unable to generate bid for {rfp.rfp_id}\n")
         
