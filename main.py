@@ -622,62 +622,121 @@ def export_bid_pdf(bid: Bid, filename: str = None):
 
 
 # ============================================================================
-# PHASE 8: MAIN EXECUTION & DEMO
+# PHASE 8: API & MAIN EXECUTION
 # ============================================================================
 
-def main():
-    """Main execution function"""
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from pypdf import PdfReader
+import io
+
+app = FastAPI()
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for demo
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize system components globally
+products = generate_product_catalog()
+rfps = generate_sample_rfps()
+orchestrator = OrchestratorAgent(products)
+
+class RFPRequest(BaseModel):
+    rfp_id: str
+
+@app.get("/products")
+def get_products():
+    return [p.to_dict() for p in products]
+
+@app.get("/rfps")
+def get_rfps():
+    return [r.to_dict() for r in rfps]
+
+@app.post("/upload-rfp")
+async def upload_rfp(file: UploadFile = File(...)):
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
-    print("\n")
-    print("╔══════════════════════════════════════════════════════════════════════════════╗")
-    print("║         AI-POWERED RFP PROCESSING SYSTEM - MULTI-AGENT FRAMEWORK             ║")
-    print("║                      EY Techathon 5.0 Submission                            ║")
-    print("╚══════════════════════════════════════════════════════════════════════════════╝")
-    print("\n")
-    
-    # Initialize system
-    print("📦 Initializing system components...")
-    products = generate_product_catalog()
-    rfps = generate_sample_rfps()
-    orchestrator = OrchestratorAgent(products)
-    
-    print(f"✓ Loaded {len(products)} products into catalog")
-    print(f"✓ Loaded {len(rfps)} pending RFPs")
-    print("\n")
-    
-    # Export product catalog
-    export_product_catalog_csv(products)
-    print("\n")
-    
-    # Process each RFP
-    generated_bids = []
-    
-    for i, rfp in enumerate(rfps[:3], 1):  # Process first 3 RFPs for demo
-        print(f"\n{'='*80}")
-        print(f"PROCESSING RFP {i}/{min(3, len(rfps))}")
-        print(f"{'='*80}\n")
+    try:
+        # Read file content
+        content = await file.read()
+        pdf_file = io.BytesIO(content)
         
-        bid = orchestrator.process_rfp(rfp)
+        # Extract text
+        reader = PdfReader(pdf_file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+            
+        # Create new RFP
+        new_id = f"RFP-{datetime.now().year}-{len(rfps) + 1:03d}"
+        new_rfp = RFP(
+            rfp_id=new_id,
+            client=f"Uploaded: {file.filename}",
+            content=text.strip(),
+            date=datetime.now().strftime("%Y-%m-%d")
+        )
         
-        if bid:
-            generated_bids.append(bid)
-            print(generate_bid_summary(bid))
-            export_bid_json(bid)
-            export_bid_pdf(bid) 
-        else:
-            print(f"\n✗ Unable to generate bid for {rfp.rfp_id}\n")
+        rfps.append(new_rfp)
         
-        print("\n")
+        return new_rfp.to_dict()
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/process-rfp")
+def process_rfp_endpoint(request: RFPRequest):
+    # Find the RFP
+    rfp = next((r for r in rfps if r.rfp_id == request.rfp_id), None)
+    if not rfp:
+        raise HTTPException(status_code=404, detail="RFP not found")
     
-    # Final summary
-    print("\n")
-    print("╔══════════════════════════════════════════════════════════════════════════════╗")
-    print("║                           PROCESSING COMPLETE                                ║")
-    print("╚══════════════════════════════════════════════════════════════════════════════╝")
-    print(f"\n✓ Successfully generated {len(generated_bids)} bids")
-    print(f"✓ {len(rfps) - len(generated_bids)} RFPs require manual review")
-    print(f"✓ All outputs exported to current directory")
-    print("\n")
+    # Reset logs for this run (in a real app, we'd create a new orchestrator per request)
+    orchestrator.logs = []
+    orchestrator.sales_agent.logs = []
+    orchestrator.technical_agent.logs = []
+    orchestrator.pricing_agent.logs = []
+    
+    # Process
+    bid = orchestrator.process_rfp(rfp)
+    
+    # Collect logs
+    logs = []
+    for log in orchestrator.get_all_logs():
+        # Parse log string to structured format for frontend
+        # Format: "[HH:MM:SS] [Agent Name]: Message"
+        try:
+            parts = log.split("] [")
+            timestamp = parts[0].strip("[")
+            agent_msg = parts[1].split("]: ")
+            agent = agent_msg[0]
+            message = agent_msg[1]
+            logs.append({
+                "timestamp": timestamp,
+                "agent": agent,
+                "message": message
+            })
+        except:
+            logs.append({
+                "timestamp": datetime.now().strftime("%H:%M:%S"),
+                "agent": "System",
+                "message": log
+            })
+            
+    response = {
+        "logs": logs,
+        "bid": bid.to_dict() if bid else None,
+        "success": bid is not None
+    }
+    
+    return response
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
